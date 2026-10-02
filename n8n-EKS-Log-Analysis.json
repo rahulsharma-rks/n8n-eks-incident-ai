@@ -1,0 +1,470 @@
+{
+  "name": "n8n-EKS-Log-Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "c095a333-87cd-498d-a549-18746cfe904f",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://92bblmmr42.execute-api.ap-south-1.amazonaws.com/incidents",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 7835fd1f34493e5d0b5e89ae019e9a81c5927a700935ea06827018fc0d8cf4bf"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4422827e-6eb0-4db2-9b40-e6adc9e0db1f",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json.data;\n\nconst parsed = typeof data === 'string'\n  ? JSON.parse(data)\n  : data;\n\nreturn [\n  {\n    json: parsed\n  }\n];"
+      },
+      "id": "fac323d6-8fa2-490d-bc98-238b133a2ab2",
+      "name": "Parse JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst incidents = data.incidents || [];\n\nconst unique = [];\nconst seen = new Set();\n\nfor (const incident of incidents) {\n  const key = [\n    incident.pod,\n    incident.container,\n    incident.severity,\n    incident.message\n  ].join('|');\n\n  if (!seen.has(key)) {\n    seen.add(key);\n    unique.push(incident);\n  }\n}\n\nreturn [\n  {\n    json: {\n      ...data,\n      incidents: unique,\n      incident_count: unique.length\n    }\n  }\n];"
+      },
+      "id": "088aa0ca-a1d9-4a48-bafa-c69d829ec85d",
+      "name": "Deduplicate Incidents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "incidents",
+        "options": {}
+      },
+      "id": "da17ab48-6644-460d-a593-45c78dc1c89a",
+      "name": "Split Incidents",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        896,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst incidentsByResource = new Map();\n\nfor (const item of items) {\n  const incident = item.json;\n\n  const key = [\n    incident.cluster,\n    incident.namespace,\n    incident.pod,\n    incident.container,\n  ].join(\"|\");\n\n  if (!incidentsByResource.has(key)) {\n    incidentsByResource.set(key, {\n      cluster: incident.cluster,\n      namespace: incident.namespace,\n      pod: incident.pod,\n      container: incident.container,\n      node: incident.node,\n      pod_ip: incident.pod_ip,\n      image: incident.image,\n\n      highest_severity: incident.severity,\n\n      timestamps: [],\n      messages: [],\n      evidence: [],\n    });\n  }\n\n  const grouped = incidentsByResource.get(key);\n\n  if (incident.timestamp) {\n    grouped.timestamps.push(incident.timestamp);\n  }\n\n  if (incident.message) {\n    grouped.messages.push(incident.message);\n  }\n\n  grouped.evidence.push({\n    timestamp: incident.timestamp,\n    severity: incident.severity,\n    message: incident.message,\n  });\n\n  // Promote severity if a CRITICAL record is present.\n  if (incident.severity === \"CRITICAL\") {\n    grouped.highest_severity = \"CRITICAL\";\n  }\n}\n\nreturn Array.from(incidentsByResource.values()).map((incident) => ({\n  json: {\n    incident: {\n      cluster: incident.cluster,\n      namespace: incident.namespace,\n      pod: incident.pod,\n      container: incident.container,\n      node: incident.node,\n      pod_ip: incident.pod_ip,\n      image: incident.image,\n      severity: incident.highest_severity,\n      timestamps: incident.timestamps,\n      messages: [...new Set(incident.messages)],\n      evidence: incident.evidence,\n    }\n  }\n}));"
+      },
+      "id": "23bebd60-d888-49dc-a5e7-31d81f279639",
+      "name": "Normalize / Aggregate Incident",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://0pqxxlh9b6.execute-api.ap-south-1.amazonaws.com/kubernetes-context",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "namespace",
+              "value": "={{ $json.incident.namespace }}"
+            },
+            {
+              "name": "pod",
+              "value": "={{ $json.incident.pod }}"
+            },
+            {
+              "name": "container",
+              "value": "={{ $json.incident.container }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 7835fd1f34493e5d0b5e89ae019e9a81c5927a700935ea06827018fc0d8cf4bf"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {}
+          }
+        }
+      },
+      "id": "7a39f462-2331-4f4b-8a3c-6f716ea1b339",
+      "name": "Get Kubernetes Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const kubernetes = $input.first().json;\n\nconst normalized = $('Normalize / Aggregate Incident').first().json;\n\nreturn [\n  {\n    json: {\n      incident: normalized.incident,\n      kubernetes: kubernetes\n    }\n  }\n];"
+      },
+      "id": "f5a17eca-0d43-4b7b-8820-93a5cf661992",
+      "name": "Build AI Incident",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{\n  \"Analyze this Kubernetes/EKS incident using the incident evidence and Kubernetes runtime context below.\\n\\n\" +\n  \"INCIDENT DATA:\\n\" +\n  JSON.stringify($json.incident, null, 2) +\n  \"\\n\\nKUBERNETES CONTEXT:\\n\" +\n  JSON.stringify($json.kubernetes, null, 2) +\n  \"\\n\\nPerform an evidence-based incident diagnosis. Identify observed facts, probable causes, supporting evidence, safe investigation steps, and recommended remediation. Do not execute commands.\"\n}}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a helpful assistantYou are a senior Kubernetes and AWS EKS SRE performing incident analysis.\n\nAnalyze incidents using only the evidence provided.\n\nYour analysis must consider:\n\n- CloudWatch application logs\n- Kubernetes pod phase\n- container readiness\n- restart count\n- current container state\n- previous container termination state\n- exit code\n- container image\n- Kubernetes node\n- recent pod logs\n- Kubernetes events\n\nRules:\n\n1. Clearly distinguish observed FACTS from hypotheses.\n2. Correlate application logs with Kubernetes runtime state.\n3. Do not invent infrastructure state or dependencies that are not provided.\n4. Do not claim a dependency is unavailable without supporting evidence.\n5. Identify the most probable failure mechanism and explain the evidence.\n6. Identify alternative plausible causes when appropriate.\n7. Provide confidence from 0 to 100.\n8. Investigation commands must be read-only.\n9. Do not execute commands.\n10. Do not perform or recommend automatic destructive remediation.\n11. Recommended remediation must be proportional to the evidence.\n12. If evidence is insufficient, explicitly state what additional information is required.\n13. Return only the requested structured JSON."
+        }
+      },
+      "id": "8d744595-f835-4ee2-b759-fc7beeb2cac0",
+      "name": "AI Incident Analyzer",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1792,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "b0d9663b-02cf-4caa-8aab-554f5b8e7857",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1664,
+        208
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"output\": {\n    \"incident\": {\n      \"title\": \"Application CrashLoopBackOff: startup failure\",\n      \"severity\": \"CRITICAL\",\n      \"category\": \"Application startup failure\",\n      \"confidence\": 85\n    },\n    \"resource\": {\n      \"cluster\": \"n8n-eks-lab\",\n      \"namespace\": \"n8n-demo\",\n      \"pod\": \"log-failure-demo-66bdc888f7-zjdfx\",\n      \"container\": \"app\",\n      \"node\": \"i-051dda83712d5159a\"\n    },\n    \"observations\": [\n      \"Pod is running but the application container is not ready.\",\n      \"Container is repeatedly restarting with CrashLoopBackOff.\",\n      \"The last container termination exited with code 1.\",\n      \"Application logs report a database connection failure.\"\n    ],\n    \"evidence\": [\n      \"ERROR database connection failed: connection refused\",\n      \"ERROR unable to initialize application\",\n      \"CRITICAL application startup failed\",\n      \"Kubernetes reports repeated BackOff events.\"\n    ],\n    \"probable_causes\": [\n      {\n        \"cause\": \"Application cannot establish a connection to its configured database\",\n        \"likelihood\": \"HIGH\",\n        \"reason\": \"The application explicitly reports a database connection refusal immediately before exiting.\"\n      }\n    ],\n    \"recommended_actions\": [\n      {\n        \"priority\": 1,\n        \"action\": \"Verify the configured database endpoint and connectivity from the application environment.\",\n        \"command\": \"kubectl -n n8n-demo describe pod log-failure-demo-66bdc888f7-zjdfx\",\n        \"risk\": \"LOW\"\n      }\n    ],\n    \"investigation_commands\": [\n      \"kubectl -n n8n-demo describe pod log-failure-demo-66bdc888f7-zjdfx\",\n      \"kubectl -n n8n-demo logs log-failure-demo-66bdc888f7-zjdfx --previous\"\n    ],\n    \"summary\": \"The application is repeatedly failing during startup because its database connection is being refused, causing exit code 1 and CrashLoopBackOff.\"\n  }\n}"
+      },
+      "id": "cb1a7ac3-b07e-4846-838e-918603175205",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1968,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const output = $json.output ?? $json.response?.output ?? $json;\n\nreturn {\n  json: output\n};"
+      },
+      "id": "bdc0a365-cd55-46a5-b2b4-32d856500764",
+      "name": "Normalize AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3299c2c2-a059-4821-88b2-485abfc97778",
+              "leftValue": "={{ $json.incident.severity }}",
+              "rightValue": "CRITICAL",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "15c1a5b2-aaf0-417e-bb54-71a964f1ff82",
+      "name": "If",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2384,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const incident = $json.incident;\nconst resource = $json.resource;\n\nconst escapeHtml = (value) =>\n  String(value ?? \"\")\n    .replace(/&/g, \"&amp;\")\n    .replace(/</g, \"&lt;\")\n    .replace(/>/g, \"&gt;\")\n    .replace(/\"/g, \"&quot;\")\n    .replace(/'/g, \"&#39;\");\n\nconst observations = ($json.observations || [])\n  .map(item => `<li>${escapeHtml(item)}</li>`)\n  .join(\"\");\n\nconst evidence = ($json.evidence || [])\n  .map(item => `<li>${escapeHtml(item)}</li>`)\n  .join(\"\");\n\nconst causes = ($json.probable_causes || [])\n  .map(item => `\n    <li>\n      <strong>${escapeHtml(item.cause)}</strong>\n      — Likelihood: ${escapeHtml(item.likelihood)}\n      <br>\n      ${escapeHtml(item.reason)}\n    </li>\n  `)\n  .join(\"\");\n\nconst actions = ($json.recommended_actions || [])\n  .map(item => `\n    <li>\n      <strong>Priority ${escapeHtml(item.priority)}:</strong>\n      ${escapeHtml(item.action)}\n      <br>\n      <strong>Risk:</strong> ${escapeHtml(item.risk)}\n      ${item.command\n        ? `<br><strong>Command:</strong> <code>${escapeHtml(item.command)}</code>`\n        : \"\"}\n    </li>\n  `)\n  .join(\"\");\n\nconst investigation = ($json.investigation_commands || [])\n  .map(item => `<li><code>${escapeHtml(item)}</code></li>`)\n  .join(\"\");\n\nconst html = `\n<html>\n<body style=\"font-family: Arial, sans-serif; line-height: 1.5;\">\n\n<h2>🚨 Kubernetes Critical Incident</h2>\n\n<p>\n<strong>Severity:</strong> ${escapeHtml(incident.severity)}<br>\n<strong>Confidence:</strong> ${escapeHtml(incident.confidence)}%\n</p>\n\n<h3>${escapeHtml(incident.title)}</h3>\n\n<p>\n<strong>Category:</strong> ${escapeHtml(incident.category)}\n</p>\n\n<h3>Resource</h3>\n\n<ul>\n<li><strong>Cluster:</strong> ${escapeHtml(resource.cluster)}</li>\n<li><strong>Namespace:</strong> ${escapeHtml(resource.namespace)}</li>\n<li><strong>Pod:</strong> ${escapeHtml(resource.pod)}</li>\n<li><strong>Container:</strong> ${escapeHtml(resource.container)}</li>\n<li><strong>Node:</strong> ${escapeHtml(resource.node)}</li>\n</ul>\n\n<h3>Summary</h3>\n\n<p>${escapeHtml($json.summary)}</p>\n\n<h3>Observed Facts</h3>\n\n<ul>\n${observations}\n</ul>\n\n<h3>Evidence</h3>\n\n<ul>\n${evidence}\n</ul>\n\n<h3>Probable Causes</h3>\n\n<ul>\n${causes}\n</ul>\n\n<h3>Recommended Actions</h3>\n\n<ul>\n${actions}\n</ul>\n\n<h3>Investigation Commands</h3>\n\n<ul>\n${investigation}\n</ul>\n\n<hr>\n\n<p style=\"font-size: 12px; color: #666;\">\nGenerated automatically by the AWS EKS AI Incident Analysis workflow.\n</p>\n\n</body>\n</html>\n`;\n\nreturn {\n  json: {\n    ...$json,\n    email_subject: `[${incident.severity}] ${incident.title}`,\n    email_html: html\n  }\n};"
+      },
+      "id": "b32e9806-20d5-4615-871f-b2481f412d5e",
+      "name": "Build Incident Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2608,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "awsrahul895@gmail.com",
+        "subject": "={{ $json.email_subject }}",
+        "message": "={{ $json.email_html }}",
+        "options": {}
+      },
+      "id": "f0fae34d-0513-4ce0-8aab-f1f51b8702c2",
+      "name": "Send a message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2832,
+        -96
+      ],
+      "webhookId": "6703cc22-9006-4b87-8bc2-55d1e9c0b851",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Vs3nnGz7TISFHWj7",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate Incidents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate Incidents": {
+      "main": [
+        [
+          {
+            "node": "Split Incidents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Incidents": {
+      "main": [
+        [
+          {
+            "node": "Normalize / Aggregate Incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize / Aggregate Incident": {
+      "main": [
+        [
+          {
+            "node": "Get Kubernetes Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Kubernetes Context": {
+      "main": [
+        [
+          {
+            "node": "Build AI Incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Incident": {
+      "main": [
+        [
+          {
+            "node": "AI Incident Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Incident Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Normalize AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Incident Analyzer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Incident Analyzer",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize AI Output": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Build Incident Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Incident Email": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "d0c6dd48-e204-4506-afcf-3d950887eef5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2e9ce2d84047eb313e7276673ada6be28d043ef9f3ea9a965af1f88551383aed"
+  },
+  "nodeGroups": [],
+  "id": "lbLlkABHmJIeS70x",
+  "tags": []
+}
