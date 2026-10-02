@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "StartApplicationLogQueries",
+      "Effect": "Allow",
+      "Action": [
+        "logs:StartQuery"
+      ],
+      "Resource": [
+        "arn:aws:logs:ap-south-1:520701146276:log-group:/aws/containerinsights/n8n-eks-lab/application",
+        "arn:aws:logs:ap-south-1:520701146276:log-group:/aws/containerinsights/n8n-eks-lab/application:*"
+      ]
+    },
+    {
+      "Sid": "ReadQueryResults",
+      "Effect": "Allow",
+      "Action": [
+        "logs:GetQueryResults"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
