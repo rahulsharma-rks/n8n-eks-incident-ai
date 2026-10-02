@@ -31,10 +31,6 @@ scripts/
 6. Configure API Gateway routes and the bearer-token authorizer.
 7. Configure the n8n workflow and Gmail OAuth credential.
 
-## Important
-
-The ZIP files contain the Lambda source code and are intended to be deployed as Lambda function code packages. Do not commit live bearer tokens, OAuth secrets, or other credentials.
-
 The supplied policies contain the reference environment used by the project (`ap-south-1`, account `5@0###14**7#`, cluster `n8n-eks-lab`). Update them for another AWS account/cluster before deployment.
 
 See the repository README for the complete end-to-end replication guide.
